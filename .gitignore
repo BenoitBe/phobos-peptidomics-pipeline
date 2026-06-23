@@ -1,0 +1,49 @@
+# ── Python ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# ── Sorties Phobos (générées, ne pas versionner) ──
+phobos_output/
+phobos_real_output/
+*_output/
+last_config_phobos.yaml
+ExperimentalDesign_template.csv
+ExperimentalDesign_generated.csv
+
+# ── Résultats / livrables générés ──
+PeptideAnalysis_Results.xlsx
+phobos_dashboard.html
+*.xlsx
+!phobos_config_example.yaml
+
+# ── Données d'entrée (à ne pas committer par défaut) ──
+*.csv
+!phobos_config_example.yaml
+protein-peptides.csv
+*.raw
+Classeur*.xlsx
+
+# ── Figures temporaires ──
+*.png
+!phobos_icon_preview.png
+*.tiff
+*.tif
+
+# ── Librairie offline (lourde, téléchargée séparément) ──
+chart.umd.min.js
+
+# ── OS / éditeurs ──
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~

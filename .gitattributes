@@ -1,2 +1,12 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Normalisation des fins de ligne
+* text=auto eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.yaml text eol=lf
+*.csv text eol=lf
+*.svg text eol=lf
+
+# Fichiers binaires
+*.png binary
+*.xlsx binary
+*.tiff binary

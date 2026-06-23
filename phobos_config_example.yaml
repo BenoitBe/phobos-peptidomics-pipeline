@@ -1,0 +1,84 @@
+# ==============================================================================
+# phobos_config_example.yaml
+# Configuration Phobos — DDA Peptide Pipeline (Peaks 13.5)
+# ==============================================================================
+# Usage :
+#   python phobos.py --config phobos_config_example.yaml
+#   python phobos.py --save-config          # questions + sauvegarde
+#   python phobos.py                        # propose last_config ou interactif
+# ==============================================================================
+
+# ── Fichiers d'entrée ─────────────────────────────────────────────────────────
+peaks_csv:    "protein-peptides.csv"    # Export Peaks 13.5 (protein-peptides)
+design_path:  "ExperimentalDesign.csv"  # label;condition;replicate  (sep=';')
+out_dir:      "phobos_output"           # Dossier de sortie (créé si absent)
+
+# ── Filtrage Peaks ─────────────────────────────────────────────────────────────
+peaks_score_thr: 20.0   # Seuil -10lgP minimum (20 ≈ p < 0.01 Peaks)
+
+# ── Seuils différentiels (volcanos + robustness) ───────────────────────────────
+volcano_use_padj:   false   # true = p.adj (FDR-BH)  |  false = p.value brut
+volcano_p_thresh:   0.05    # Seuil statistique
+volcano_ratio_min:  1.5     # Ratio linéaire minimum (1.5 = 50% de changement)
+
+# ── Seuils ANOVA / heatmaps ────────────────────────────────────────────────────
+anova_use_padj:   false
+anova_p_thresh:   0.05
+n_heatmap_clusters: 3       # K-means clusters (lignes de la heatmap)
+
+# ── Robustness score ───────────────────────────────────────────────────────────
+n_iter_robustness: 100      # Nombre de ré-imputations (0 = désactivé)
+
+# ── Correction FDR ─────────────────────────────────────────────────────────────
+fdr_global: false           # false = par contraste  |  true = toute l'étude
+
+# ── Imputation ─────────────────────────────────────────────────────────────────
+# Fixé à QRILC pour DDA (MNAR dominant) — pas modifiable dans cette version.
+impute_method: "qrilc"
+
+# ── Modules désactivés dans Phobos v1 ─────────────────────────────────────────
+# (réservés pour une version future)
+go_organism:    null    # GO non disponible pour l'instant
+make_wgcna:     false   # WGCNA non activé (coûteux au niveau peptide)
+make_dashboard: false
+use_deqms:      false   # DEqMS non pertinent au niveau peptide
+
+# ==============================================================================
+# NOTES
+# ==============================================================================
+# Design CSV : séparateur ';', colonnes obligatoires : label, condition, replicate
+#
+# Correspondance label ↔ colonne Area :
+#   Le label doit correspondre au nom de la colonne Area dans Peaks.
+#   Peaks génère "Area <sample_name>" ou "Area" (run unique).
+#   Exemple : label = "Sample_01"  ↔  colonne Peaks = "Area Sample_01"
+#
+# Unité d'analyse :
+#   Un peptide = Séquence + Charge + Modifications → features distinctes.
+#   L'agrégation protéine (médiane) est calculée en post-hoc pour visualisation
+#   dans l'onglet Protein_Aggregation, mais le test différentiel reste peptide-level.
+#
+# Fichier de sortie : PeptideAnalysis_Results.xlsx
+# Feuilles Excel :
+#   Methods · raw_peptides · Log2_Impute · QC · PCA_UMAP · UMAP · Scatter_Plots
+#   Differential_Expression · Volcano_Plots · UpSet_Intersections · Zscore_Heatmap
+#   ANOVA_Results · ANOVA_Clusters · Protein_Aggregation
+
+# ── PTM-targeted sub-analyses ──────────────────────────────────────────────
+# Run the full pipeline (volcano/ANOVA/heatmap) on PTM-filtered subsets.
+#   null  -> interactive selection at launch (default)
+#   []    -> skip PTM sub-analyses entirely
+#   list  -> run these PTMs without prompting. Valid keys:
+#            Phospho, Oxidation, Methyl, Dimethyl, Trimethyl, Methyl_all, Acetyl
+# Detection combines the PTM text column AND inline delta masses (e.g. +15.99).
+# Example: ptm_keys: [Phospho, Oxidation, Methyl_all, Acetyl]
+ptm_keys: null
+
+# ── Protein descriptions from a FASTA ──────────────────────────────────────
+# PEAKS exports may lack a Description column. If a UniProt-style FASTA is in
+# the input folder, Phobos recovers descriptions by joining on the Accession.
+#   null -> auto-detect the first *.fasta/*.fa in the input directory (default)
+#   path -> use this specific FASTA file
+# Join key = first UniProt ID (before the first '|') of the first protein in
+# the Accession group. Multi-protein groups keep the first protein's description.
+fasta_path: null

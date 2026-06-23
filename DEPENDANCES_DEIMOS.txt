@@ -1,0 +1,36 @@
+=============================================================================
+  FICHIERS PARTAGÉS AVEC DEIMOS — À COPIER DEPUIS LE REPO DEIMOS
+=============================================================================
+
+Phobos réutilise UN seul module de Deimos. Il n'est PAS fourni ici :
+copie-le depuis ton repo deimos-proteomics-pipeline dans le même dossier
+que phobos.py.
+
+  1. limma_ebayes.py   (moteur statistique : lm_fit, contrasts_fit, ebayes,
+                        top_table, make_all_contrasts, make_design_matrix,
+                        _bh_correction)
+
+-----------------------------------------------------------------------------
+  IMPORTANT
+-----------------------------------------------------------------------------
+Note : config.py est désormais FOURNI avec Phobos (version dédiée, sans les
+questions WGCNA/GO/dashboard de Deimos). Plus besoin de le copier.
+
+-----------------------------------------------------------------------------
+  Arborescence finale attendue
+-----------------------------------------------------------------------------
+  phobos/
+  ├── phobos.py                   (fourni)
+  ├── build_dashboard_phobos.py   (fourni)
+  ├── make_design_template.py     (fourni)
+  ├── ptm_analysis.py             (fourni)
+  ├── fasta_descriptions.py       (fourni)
+  ├── phobos_config_example.yaml  (fourni)
+  ├── phobos_icon.svg             (fourni)
+  ├── phobos_mark.svg             (fourni)
+  ├── README.md                   (fourni)
+  ├── limma_ebayes.py             (← copier depuis Deimos)
+  ├── config.py                   (fourni — version dédiée Phobos)
+  ├── chart.umd.min.js            (← optionnel, pour dashboard offline)
+  └── ExperimentalDesign.csv      (← généré via make_design_template.py)
+=============================================================================

@@ -1,0 +1,13 @@
+# Phobos — dépendances (identiques à Deimos)
+pandas
+numpy
+scipy
+scikit-learn
+umap-learn
+matplotlib
+seaborn
+adjustText
+openpyxl
+pillow
+PyComplexHeatmap
+pyyaml
