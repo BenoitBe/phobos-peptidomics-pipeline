@@ -150,6 +150,10 @@ def ask_params() -> dict:
         elif raw == "2":
             fdr_global = True
 
+    # Dashboard HTML interactif
+    raw = input("  Generate the interactive HTML dashboard? [Y/n] -> ").strip().lower()
+    make_dashboard = raw in ("", "y", "yes", "o", "oui")
+
     params = {
         "volcano_use_padj":   v_type == "2",
         "volcano_p_thresh":   v_val,
@@ -162,9 +166,8 @@ def ask_params() -> dict:
         "fdr_global":         fdr_global,
         "peaks_score_thr":    score_thr,
         "impute_method":      "qrilc",   # fixé QRILC (DDA MNAR dominant)
-        # Phobos n'a pas de GO ni dashboard pour l'instant
         "go_organism":        None,
-        "make_dashboard":     False,
+        "make_dashboard":     make_dashboard,
         "use_deqms":          False,
     }
 
