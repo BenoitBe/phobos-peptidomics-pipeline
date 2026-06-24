@@ -1664,7 +1664,8 @@ def export_excel(df_raw: pd.DataFrame, df_results: pd.DataFrame,
                  mat_imp: pd.DataFrame, umap_coords: pd.DataFrame,
                  n_iter: int, out_path: str,
                  prot_mat: pd.DataFrame = None,
-                 ptm_results: dict = None):
+                 ptm_results: dict = None,
+                 mat_filt: pd.DataFrame = None):
     """Classeur Excel multi-onglets, structure parallèle à deimos.py."""
     print("\n[EXCEL] Building Excel report...")
     wb = openpyxl.Workbook()
@@ -1733,6 +1734,17 @@ def export_excel(df_raw: pd.DataFrame, df_results: pd.DataFrame,
     if "Accession" in meta.columns:
         df_imp.insert(1, "Accession", meta["Accession"].values[:len(df_imp)])
     write_df(ws, df_imp.round(4))
+
+    # Log2 matrix BEFORE imputation (real missing values preserved as NaN)
+    # Utilisée par le dashboard pour le QC de complétude (vrais trous).
+    if mat_filt is not None:
+        ws = wb.create_sheet("Log2_PreImpute")
+        df_pre = mat_filt.copy()
+        df_pre.columns = [str(c) for c in df_pre.columns]
+        df_pre.insert(0, "peptide_id", meta["peptide_id"].values[:len(df_pre)])
+        if "Accession" in meta.columns:
+            df_pre.insert(1, "Accession", meta["Accession"].values[:len(df_pre)])
+        write_df(ws, df_pre.round(4))
 
     # QC
     ws = wb.create_sheet("QC")
@@ -2069,7 +2081,8 @@ def main():
         hm_violin=hm_violin, upset_file=upset_file,
         mat_imp=mat_imp, umap_coords=umap_coords,
         n_iter=N_ITER, out_path=out_name, prot_mat=prot_mat,
-        ptm_results=ptm_results
+        ptm_results=ptm_results,
+        mat_filt=mat_filt
     )
 
     # 15. Dashboard HTML interactif (optionnel, non bloquant)

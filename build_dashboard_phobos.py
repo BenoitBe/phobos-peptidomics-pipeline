@@ -128,6 +128,20 @@ def _extract_payload(xlsx_path: str, design: pd.DataFrame,
                                 for c in sample_cols]
         payload["peptide_intensities"] = intens
 
+    # --- per-sample PRE-imputation matrix (real missing values) for QC ---
+    pre = _safe_read(xlsx_path, "Log2_PreImpute")
+    if pre is not None:
+        pre_cols = [c for c in pre.columns if c in cond_map]
+        # Comptage des vrais trous par échantillon (NaN = non détecté avant imputation)
+        miss_by = {c: int(pre[c].isna().sum()) for c in pre_cols}
+        det_by  = {c: int(pre[c].notna().sum()) for c in pre_cols}
+        payload["qc_preimpute"] = {
+            "sample_cols": pre_cols,
+            "missing": miss_by,
+            "detected": det_by,
+            "n_peptides": int(len(pre)),
+        }
+
     # --- protein aggregation (rollup) ---
     prot = _safe_read(xlsx_path, "Protein_Aggregation")
     if prot is not None and "Accession" in prot.columns:
@@ -236,6 +250,11 @@ def _html_template(payload_json: str, chartjs_tag: str,
           border:1px solid var(--line); border-radius:6px; padding:6px 10px;
           font-size:13px; }}
   label.lbl {{ color:var(--muted); font-size:12px; }}
+  .flip-btn {{ background:var(--panel2); color:var(--ink); border:1px solid var(--line);
+          border-radius:6px; padding:6px 12px; font-size:13px; cursor:pointer;
+          transition:all .15s; }}
+  .flip-btn:hover {{ background:var(--accent); color:#fff; border-color:var(--accent); }}
+  .flip-btn.active {{ background:var(--accent); color:#fff; border-color:var(--accent); }}
   canvas {{ max-width:100%; }}
   table {{ width:100%; border-collapse:collapse; font-size:12px; }}
   th, td {{ text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); }}
@@ -319,6 +338,7 @@ def _html_template(payload_json: str, chartjs_tag: str,
   <button data-tab="table">DE Table</button>
   <button data-tab="intensity">Intensity</button>
   <button data-tab="pca">PCA / UMAP</button>
+  <button data-tab="qc">QC</button>
   <button data-tab="facets">Peptide facets</button>
 </nav>
 
@@ -350,6 +370,7 @@ def _html_template(payload_json: str, chartjs_tag: str,
           <option value="mod">Modification</option>
         </select>
         <label class="lbl"><input type="checkbox" id="volc-robust"/> Robust only</label>
+        <button id="volc-flip" class="flip-btn" title="Swap numerator/denominator (A vs B → B vs A)">⇄ Invert</button>
       </div>
       <canvas id="chart-volcano" height="150"></canvas>
       <div class="legend" id="volc-legend"></div>
@@ -410,6 +431,37 @@ def _html_template(payload_json: str, chartjs_tag: str,
     </div>
     <p class="note">PCA computed live from the current view's intensity matrix
        (peptide or protein). UMAP coordinates are precomputed (peptide level).</p>
+  </section>
+
+  <!-- QC -->
+  <section class="tab-page" data-page="qc">
+    <div class="grid cards" id="qc-cards"></div>
+    <div class="row">
+      <div class="panel" style="flex:1; min-width:340px;">
+        <h3>Peptides detected per sample</h3>
+        <canvas id="qc-detected" height="150"></canvas>
+      </div>
+      <div class="panel" style="flex:1; min-width:340px;">
+        <h3>Missing values per sample</h3>
+        <canvas id="qc-missing" height="150"></canvas>
+        <p class="note">Real gaps <b>before</b> imputation (not detected in the
+           sample). High, condition-correlated missingness is the MNAR signature
+           that justifies QRILC.</p>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Intensity distribution per sample (log2)</h3>
+      <canvas id="qc-boxplot" height="120"></canvas>
+      <p class="note">Box = median ± IQR, whiskers = 5th–95th percentile.
+         Consistent medians across samples indicate good normalisation.</p>
+    </div>
+    <div class="panel">
+      <h3>RLE — Relative Log Expression</h3>
+      <canvas id="qc-rle" height="120"></canvas>
+      <p class="note">Per-peptide deviation from its median across samples.
+         Boxes centred on 0 with similar spread = no residual technical bias.
+         A shifted or wider box flags a problematic run.</p>
+    </div>
   </section>
 
   <!-- FACETS -->
@@ -559,28 +611,42 @@ function renderVolcano(){
   if(overlay) overlay.classList.add('hide');
   innerEls.forEach(e=>e.classList.remove('hide'));
   const sel=document.getElementById('volc-contrast');
+  const flipBtn=document.getElementById('volc-flip');
   if(!sel.options.length){
     DATA.contrasts.forEach(c=>sel.add(new Option(c.replace(/_vs_/,' vs '),c)));
     sel.onchange=renderVolcano;
     document.getElementById('volc-colorby').onchange=renderVolcano;
     document.getElementById('volc-robust').onchange=renderVolcano;
+    flipBtn.onclick=()=>{ window._volcFlip=!window._volcFlip;
+                          flipBtn.classList.toggle('active', window._volcFlip);
+                          renderVolcano(); };
   }
   const c=sel.value||DATA.contrasts[0];
   const colorBy=document.getElementById('volc-colorby').value;
   const robustOnly=document.getElementById('volc-robust').checked;
+  const flipped=!!window._volcFlip;
+  const sign=flipped?-1:1;
+  // Robustness threshold = 80% of iterations (if available)
+  const robMax=DATA.meta.n_iter||100;
+  const robCut=Math.max(1, Math.round(robMax*0.8));
   const pts={};
   const push=(k,col,x,y,label)=>{ (pts[k]=pts[k]||{c:col,d:[]}).d.push({x,y,label}); };
 
   DATA.peptides.forEach(r=>{
-    const d=r[c+"_diff"], p=r[pcol(c)];
+    let d=r[c+"_diff"], p=r[pcol(c)];
     if(d==null||p==null) return;
     if(robustOnly){
-      const rob=r["Robustness_Score_"+c]; if(rob==null||rob< (DATA.meta.n_iter||1)*0.8*0+1) {}
+      const rob=r["Robustness_Score_"+c];
+      if(rob==null || rob<robCut) return;   // garder seulement les robustes
     }
+    d=d*sign;                                // inversion du fold-change
     const y=-Math.log10(Math.max(p,1e-10));
     let key,col;
     if(colorBy==='status'){
-      const s=statusOf(r,c);
+      // statut recalculé sur le FC inversé (up/down échangés)
+      let s='ns';
+      if(d> T.lfc_min && p<T.p_thresh) s='up';
+      else if(d<-T.lfc_min && p<T.p_thresh) s='down';
       key=s; col={up:'#E74C3C',down:'#3498DB',ns:'#4a5568'}[s];
     } else if(colorBy==='charge'){
       key='z='+(r.Charge!=null?r.Charge:'?');
@@ -608,9 +674,14 @@ function renderVolcano(){
         y:{title:{display:true,text:'-log10(p)',color:'#8b97a6'},
           ticks:{color:'#8b97a6'},grid:{color:'#2d3742'}}}}
   });
+  // Sens du contraste affiché (inversé si flip actif)
+  const parts=c.split("_vs_");
+  const shown = flipped ? `${parts[1]} vs ${parts[0]}` : `${parts[0]} vs ${parts[1]}`;
   document.getElementById('volc-note').textContent=
+    `Contrast: ${shown}${flipped?'  (inverted)':''}  •  `+
     `Thresholds: ${T.use_padj?'p.adj':'p.value'} < ${T.p_thresh}, `+
-    `|log2FC| > ${T.lfc_min.toFixed(2)} (ratio ${T.ratio_min}).`;
+    `|log2FC| > ${T.lfc_min.toFixed(2)} (ratio ${T.ratio_min}). `+
+    `Positive log2FC = enriched in ${flipped?parts[1]:parts[0]}.`;
 }
 
 // ===== DE Table =====
@@ -749,6 +820,26 @@ function computePCA(matrix){
   return c1.map((_,i)=>[c1[i],c2[i]]);
 }
 function renderPCA(){
+  // Plugin inline : dessine le label de chaque point en permanence
+  const labelPlugin={
+    id:'pointLabels',
+    afterDatasetsDraw(chart){
+      const {ctx}=chart;
+      ctx.save();
+      ctx.font='10px Segoe UI, sans-serif';
+      ctx.fillStyle='#e6edf3';
+      ctx.textAlign='left'; ctx.textBaseline='middle';
+      chart.data.datasets.forEach((ds,di)=>{
+        const meta=chart.getDatasetMeta(di);
+        if(meta.hidden) return;
+        meta.data.forEach((pt,i)=>{
+          const lbl=ds.data[i] && ds.data[i].label;
+          if(lbl) ctx.fillText(lbl, pt.x+8, pt.y);
+        });
+      });
+      ctx.restore();
+    }
+  };
   let cols, recs;
   if(LEVEL==='peptide'){
     cols=DATA.meta.sample_cols||[];
@@ -770,7 +861,9 @@ function renderPCA(){
       data:{datasets:Object.entries(groups).map(([k,v])=>({
         label:k,data:v,backgroundColor:COND_COLORS[k]||'#5B8FF9',
         pointRadius:7,pointHoverRadius:9}))},
+      plugins:[labelPlugin],
       options:{responsive:true,
+        layout:{padding:{right:40}},
         plugins:{legend:{labels:{color:'#e6edf3'}},
           tooltip:{callbacks:{label:(c)=>c.raw.label}}},
         scales:{x:{title:{display:true,text:'PC1',color:'#8b97a6'},
@@ -787,10 +880,12 @@ function renderPCA(){
       {x:u.UMAP1,y:u.UMAP2,label:u.label});});
     charts.umap=new Chart(document.getElementById('chart-umap'),{
       type:'scatter',
+      plugins:[labelPlugin],
       data:{datasets:Object.entries(groups).map(([k,v])=>({
         label:k,data:v,backgroundColor:COND_COLORS[k]||'#5B8FF9',
         pointRadius:7,pointHoverRadius:9}))},
       options:{responsive:true,
+        layout:{padding:{right:40}},
         plugins:{legend:{labels:{color:'#e6edf3'}},
           tooltip:{callbacks:{label:(c)=>c.raw.label}}},
         scales:{x:{title:{display:true,text:'UMAP1',color:'#8b97a6'},
@@ -842,6 +937,148 @@ function renderFacets(){
   });
 }
 
+// ===== QC (native, computed client-side from peptide intensities) =====
+function _quantile(sorted, q){
+  if(!sorted.length) return null;
+  const pos=(sorted.length-1)*q, base=Math.floor(pos), rest=pos-base;
+  return sorted[base+1]!==undefined ? sorted[base]+rest*(sorted[base+1]-sorted[base])
+                                    : sorted[base];
+}
+function renderQC(){
+  const cols=DATA.meta.sample_cols||[];
+  const recs=Object.values(DATA.peptide_intensities||{});
+  if(!cols.length || !recs.length){
+    document.querySelector('[data-page="qc"]').querySelectorAll('canvas')
+      .forEach(c=>{const ctx=c.getContext('2d'); ctx.clearRect(0,0,c.width,c.height);});
+    return;
+  }
+  const nS=cols.length;
+  const colColors=cols.map(c=>COND_COLORS[condOf(c)]||'#5B8FF9');
+
+  // Per-sample detected/missing : utiliser la matrice PRÉ-imputation (vrais trous)
+  // si disponible, sinon retomber sur la matrice imputée (0 trou).
+  const pre=DATA.qc_preimpute;
+  let detected, missing, missFromPre=false;
+  if(pre && pre.sample_cols && pre.sample_cols.length){
+    detected=cols.map(c=>pre.detected[c]!=null?pre.detected[c]:0);
+    missing =cols.map(c=>pre.missing[c]!=null?pre.missing[c]:0);
+    missFromPre=true;
+  } else {
+    detected=new Array(nS).fill(0);
+    missing =new Array(nS).fill(0);
+    recs.forEach(row=>{ for(let i=0;i<nS;i++){
+      if(row[i]==null) missing[i]++; else detected[i]++; }});
+  }
+  // Listes de valeurs (matrice imputée) pour les distributions/boxplots
+  const valsBy=Array.from({length:nS},()=>[]);
+  recs.forEach(row=>{ for(let i=0;i<nS;i++){ if(row[i]!=null) valsBy[i].push(row[i]); }});
+
+  // Cards
+  const totalPep = (pre && pre.n_peptides) ? pre.n_peptides : recs.length;
+  const avgDet=Math.round(detected.reduce((a,b)=>a+b,0)/nS);
+  const totMiss=missing.reduce((a,b)=>a+b,0);
+  const pctMiss=(100*totMiss/(nS*totalPep)).toFixed(1);
+  document.getElementById('qc-cards').innerHTML=[
+    [totalPep,'Peptides (filtered)'],
+    [nS,'Samples'],
+    [avgDet,'Avg detected / sample'],
+    [pctMiss+'%', missFromPre?'Missing (pre-imputation)':'Missing values'],
+  ].map(([v,l])=>`<div class="card"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
+
+  // 1) Detected per sample
+  destroy('qcdet');
+  charts.qcdet=new Chart(document.getElementById('qc-detected'),{
+    type:'bar',
+    data:{labels:cols,datasets:[{data:detected,backgroundColor:colColors}]},
+    options:{responsive:true,plugins:{legend:{display:false}},
+      scales:{x:{ticks:{color:'#8b97a6',maxRotation:90,minRotation:45}},
+        y:{ticks:{color:'#8b97a6'},title:{display:true,text:'# peptides',color:'#8b97a6'}}}}
+  });
+
+  // 2) Missing per sample
+  destroy('qcmiss');
+  charts.qcmiss=new Chart(document.getElementById('qc-missing'),{
+    type:'bar',
+    data:{labels:cols,datasets:[{data:missing,backgroundColor:'#E8684A'}]},
+    options:{responsive:true,plugins:{legend:{display:false}},
+      scales:{x:{ticks:{color:'#8b97a6',maxRotation:90,minRotation:45}},
+        y:{ticks:{color:'#8b97a6'},title:{display:true,text:'# missing',color:'#8b97a6'}}}}
+  });
+
+  // Box stats helper -> floating bars [q1,q3] + median/whisker overlay plugin
+  const stats=valsBy.map(v=>{
+    const s=v.slice().sort((a,b)=>a-b);
+    return {q1:_quantile(s,.25),med:_quantile(s,.5),q3:_quantile(s,.75),
+            lo:_quantile(s,.05),hi:_quantile(s,.95)};
+  });
+  const boxPlugin=(getStats)=>({
+    id:'box'+Math.random(),
+    afterDatasetsDraw(chart){
+      const {ctx,scales:{x,y}}=chart, st=getStats();
+      ctx.save(); ctx.strokeStyle='#e6edf3'; ctx.lineWidth=1.2;
+      st.forEach((s,i)=>{
+        if(s.med==null) return;
+        const cx=x.getPixelForValue(i), w=Math.min(x.width/st.length*0.5,22);
+        // median line
+        ctx.beginPath(); ctx.moveTo(cx-w,y.getPixelForValue(s.med));
+        ctx.lineTo(cx+w,y.getPixelForValue(s.med)); ctx.stroke();
+        // whiskers
+        ctx.beginPath();
+        ctx.moveTo(cx,y.getPixelForValue(s.q3)); ctx.lineTo(cx,y.getPixelForValue(s.hi));
+        ctx.moveTo(cx,y.getPixelForValue(s.q1)); ctx.lineTo(cx,y.getPixelForValue(s.lo));
+        ctx.moveTo(cx-w*0.6,y.getPixelForValue(s.hi)); ctx.lineTo(cx+w*0.6,y.getPixelForValue(s.hi));
+        ctx.moveTo(cx-w*0.6,y.getPixelForValue(s.lo)); ctx.lineTo(cx+w*0.6,y.getPixelForValue(s.lo));
+        ctx.stroke();
+      });
+      ctx.restore();
+    }
+  });
+
+  // 3) Intensity boxplot (floating bar q1..q3 + plugin overlay)
+  destroy('qcbox');
+  charts.qcbox=new Chart(document.getElementById('qc-boxplot'),{
+    type:'bar',
+    data:{labels:cols,datasets:[{
+      data:stats.map(s=>[s.q1,s.q3]),
+      backgroundColor:colColors.map(c=>c+'aa'),borderColor:colColors,borderWidth:1}]},
+    plugins:[boxPlugin(()=>stats)],
+    options:{responsive:true,plugins:{legend:{display:false},
+      tooltip:{callbacks:{label:(ctx)=>{const s=stats[ctx.dataIndex];
+        return `med=${s.med.toFixed(2)}  IQR=[${s.q1.toFixed(2)}, ${s.q3.toFixed(2)}]`;}}}},
+      scales:{x:{ticks:{color:'#8b97a6',maxRotation:90,minRotation:45}},
+        y:{ticks:{color:'#8b97a6'},title:{display:true,text:'log2 intensity',color:'#8b97a6'}}}}
+  });
+
+  // 4) RLE: per-peptide deviation from its across-sample median
+  const rleBy=Array.from({length:nS},()=>[]);
+  recs.forEach(row=>{
+    const present=row.filter(v=>v!=null);
+    if(present.length<2) return;
+    const s=present.slice().sort((a,b)=>a-b);
+    const med=_quantile(s,.5);
+    for(let i=0;i<nS;i++) if(row[i]!=null) rleBy[i].push(row[i]-med);
+  });
+  const rleStats=rleBy.map(v=>{
+    const s=v.slice().sort((a,b)=>a-b);
+    return {q1:_quantile(s,.25),med:_quantile(s,.5),q3:_quantile(s,.75),
+            lo:_quantile(s,.05),hi:_quantile(s,.95)};
+  });
+  destroy('qcrle');
+  charts.qcrle=new Chart(document.getElementById('qc-rle'),{
+    type:'bar',
+    data:{labels:cols,datasets:[{
+      data:rleStats.map(s=>[s.q1,s.q3]),
+      backgroundColor:colColors.map(c=>c+'aa'),borderColor:colColors,borderWidth:1}]},
+    plugins:[boxPlugin(()=>rleStats)],
+    options:{responsive:true,plugins:{legend:{display:false},
+      tooltip:{callbacks:{label:(ctx)=>{const s=rleStats[ctx.dataIndex];
+        return `median RLE=${s.med.toFixed(3)}`;}}}},
+      scales:{x:{ticks:{color:'#8b97a6',maxRotation:90,minRotation:45}},
+        y:{ticks:{color:'#8b97a6'},title:{display:true,text:'RLE (log2)',color:'#8b97a6'},
+           suggestedMin:-2,suggestedMax:2}}}
+  });
+}
+
 // ===== Router =====
 function renderTab(tab){
   if(tab==='overview') renderOverview();
@@ -849,6 +1086,7 @@ function renderTab(tab){
   else if(tab==='table') renderTable();
   else if(tab==='intensity'){ charts._int_init=false; renderIntensity(); }
   else if(tab==='pca') renderPCA();
+  else if(tab==='qc') renderQC();
   else if(tab==='facets'){
     if(LEVEL==='protein'){
       document.querySelector('[data-page="facets"]').innerHTML=
