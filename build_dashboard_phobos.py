@@ -280,9 +280,26 @@ def _html_template(payload_json: str, chartjs_tag: str,
   .note {{ color:var(--muted); font-size:12px; line-height:1.5; }}
   .seq {{ font-family:'Consolas',monospace; font-size:11px;
          letter-spacing:.5px; word-break:break-all; }}
-  td.desc {{ max-width:240px; font-size:11px; color:var(--muted);
+  td.desc {{ font-size:11px; color:var(--muted);
          overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
   td.desc:hover {{ white-space:normal; }}
+  /* Largeurs strictes (table-layout:fixed) : empêche Gene d'absorber l'espace */
+  #de-table {{ table-layout:fixed; width:100%; }}
+  #de-table th:nth-child(1),  #de-table td:nth-child(1)  {{ width:18%; }}  /* Sequence */
+  #de-table th:nth-child(2),  #de-table td:nth-child(2)  {{ width:15%; }}  /* Accession */
+  #de-table th:nth-child(3),  #de-table td:nth-child(3)  {{ width:7%;  }}  /* Gene */
+  #de-table th:nth-child(4),  #de-table td:nth-child(4)  {{ width:22%; }}  /* Description */
+  #de-table th:nth-child(5),  #de-table td:nth-child(5)  {{ width:4%;  }}  /* z */
+  #de-table th:nth-child(6),  #de-table td:nth-child(6)  {{ width:13%; }}  /* Mod */
+  #de-table th:nth-child(7),  #de-table td:nth-child(7)  {{ width:7%;  }}  /* log2FC */
+  #de-table th:nth-child(8),  #de-table td:nth-child(8)  {{ width:7%;  }}  /* p */
+  #de-table th:nth-child(9),  #de-table td:nth-child(9)  {{ width:5%;  }}  /* Pi */
+  #de-table th:nth-child(10), #de-table td:nth-child(10) {{ width:6%;  }}  /* Robust */
+  #de-table th:nth-child(11), #de-table td:nth-child(11) {{ width:7%;  }}  /* Status */
+  /* Cellules texte : couper proprement plutôt que déborder */
+  #de-table td:nth-child(2), #de-table td:nth-child(3), #de-table td:nth-child(6) {{
+         white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+  #de-table td.seq {{ white-space:normal; word-break:break-all; }}
 </style>
 </head>
 <body>
