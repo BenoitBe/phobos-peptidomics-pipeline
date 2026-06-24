@@ -98,7 +98,9 @@ def _extract_payload(xlsx_path: str, design: pd.DataFrame,
         payload["contrasts"] = contrasts
 
         keep = ["peptide_id", "Sequence", "Modifications", "Charge",
-                "Accession", "Score_10lgP"]
+                "Accession", "Gene", "Description", "Score_10lgP",
+                "imputed", "num_imputed"]
+        keep = [k for k in keep if k in diff.columns]
         for c in contrasts:
             keep += [f"{c}_diff", f"{c}_p.val", f"{c}_p.adj",
                      f"Pi_Score_{c}", f"Robustness_Score_{c}"]
@@ -278,6 +280,9 @@ def _html_template(payload_json: str, chartjs_tag: str,
   .note {{ color:var(--muted); font-size:12px; line-height:1.5; }}
   .seq {{ font-family:'Consolas',monospace; font-size:11px;
          letter-spacing:.5px; word-break:break-all; }}
+  td.desc {{ max-width:240px; font-size:11px; color:var(--muted);
+         overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+  td.desc:hover {{ white-space:normal; }}
 </style>
 </head>
 <body>
@@ -717,7 +722,8 @@ function renderTable(){
   const q=document.getElementById('tbl-search').value.toLowerCase();
 
   let rows=DATA.peptides.map(r=>({
-    seq:r.Sequence||r.peptide_id, acc:r.Accession, z:r.Charge,
+    seq:r.Sequence||r.peptide_id, acc:r.Accession, gene:r.Gene,
+    desc:r.Description, z:r.Charge,
     mod:r.Modifications, diff:r[c+"_diff"], p:r[pcol(c)],
     pi:r["Pi_Score_"+c], rob:r["Robustness_Score_"+c],
     status:statusOf(r,c)
@@ -727,18 +733,22 @@ function renderTable(){
   else if(filt==='up') rows=rows.filter(r=>r.status==='up');
   else if(filt==='down') rows=rows.filter(r=>r.status==='down');
   if(q) rows=rows.filter(r=>(r.seq||'').toLowerCase().includes(q)||
-                            (r.acc||'').toString().toLowerCase().includes(q));
+                            (r.acc||'').toString().toLowerCase().includes(q)||
+                            (r.gene||'').toString().toLowerCase().includes(q)||
+                            (r.desc||'').toString().toLowerCase().includes(q));
   rows.sort((a,b)=>(b.pi||0)-(a.pi||0));
 
   document.getElementById('tbl-count').textContent=`${rows.length} peptides`;
   const thead=document.querySelector('#de-table thead');
   const tbody=document.querySelector('#de-table tbody');
-  thead.innerHTML=`<tr><th>Sequence</th><th>Accession</th><th>z</th>
+  thead.innerHTML=`<tr><th>Sequence</th><th>Accession</th><th>Gene</th>
+    <th>Description</th><th>z</th>
     <th>Mod</th><th>log2FC</th><th>${T.use_padj?'p.adj':'p.val'}</th>
     <th>Pi</th><th>Robust</th><th>Status</th></tr>`;
   tbody.innerHTML=rows.slice(0,500).map(r=>{
     const pill=`<span class="pill ${r.status}">${r.status.toUpperCase()}</span>`;
     return `<tr><td class="seq">${r.seq||''}</td><td>${r.acc||''}</td>
+      <td>${r.gene||''}</td><td class="desc">${r.desc||''}</td>
       <td>${r.z!=null?r.z:''}</td><td>${r.mod||''}</td>
       <td>${r.diff!=null?r.diff.toFixed(3):''}</td>
       <td>${r.p!=null?r.p.toExponential(2):''}</td>

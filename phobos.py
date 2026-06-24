@@ -821,6 +821,13 @@ def run_differential_analysis(mat_imp: pd.DataFrame, mat_filt: pd.DataFrame,
 
     df_results = meta.reset_index(drop=True).copy()
 
+    # Colonnes d'imputation (comme Deimos) : pour chaque peptide, nombre de
+    # valeurs manquantes AVANT imputation (donc imputées) et flag booléen.
+    # mat_filt est aligné ligne à ligne avec meta / mat_imp.
+    na_per_pep = mat_filt.isna().sum(axis=1).values.astype(int)
+    df_results["imputed"] = na_per_pep > 0
+    df_results["num_imputed"] = na_per_pep
+
     scatter_files = []
 
     for i, cname in enumerate(contrast_names):
@@ -1600,6 +1607,10 @@ def build_methods_sheet(ws, params: dict, n_raw_pep: int, n_filt_pep: int,
        "Quantile Regression Imputation of Left-Censored data (Lazar 2016). "
        "Suited to DDA (MNAR dominant: peptides under detection threshold are missing). "
        "Draws from a truncated normal below the estimated detection limit.")
+    kv("Imputation tracking", "imputed / num_imputed columns",
+       "Per peptide: flag (>=1 imputed value) and count of imputed values. "
+       "Cross-check with the robustness score — a low-robustness hit with many "
+       "imputed values is driven by imputation, not by a solid signal.")
 
     s("4. DIFFERENTIAL ANALYSIS")
     kv("Model", "limma eBayes",
@@ -1733,6 +1744,8 @@ def export_excel(df_raw: pd.DataFrame, df_results: pd.DataFrame,
     df_imp.insert(0, "peptide_id", meta["peptide_id"].values[:len(df_imp)])
     if "Accession" in meta.columns:
         df_imp.insert(1, "Accession", meta["Accession"].values[:len(df_imp)])
+    if "Description" in meta.columns:
+        df_imp.insert(2, "Description", meta["Description"].values[:len(df_imp)])
     write_df(ws, df_imp.round(4))
 
     # Log2 matrix BEFORE imputation (real missing values preserved as NaN)
@@ -1769,7 +1782,8 @@ def export_excel(df_raw: pd.DataFrame, df_results: pd.DataFrame,
     # Analyse différentielle
     ws = wb.create_sheet("Differential_Expression")
     cols_keep = ["peptide_id", "Sequence", "Modifications", "Charge",
-                 "Accession", "Gene", "Description", "Score_10lgP"]
+                 "Accession", "Gene", "Description", "Score_10lgP",
+                 "imputed", "num_imputed"]
     for cname in contrast_names:
         for suffix in ("_diff", "_p.val", "_p.adj",
                        f"_p.val", f"_p.adj"):
@@ -1842,7 +1856,8 @@ def export_excel(df_raw: pd.DataFrame, df_results: pd.DataFrame,
             dfr = b.get("df_results")
             if dfr is not None:
                 cols = ["peptide_id", "Sequence", "Modifications", "Charge",
-                        "Accession", "Gene", "Description"]
+                        "Accession", "Gene", "Description",
+                        "imputed", "num_imputed"]
                 for c in cons:
                     cols += [f"{c}_diff", f"{c}_p.val", f"{c}_p.adj",
                              f"Pi_Score_{c}", f"Robustness_Score_{c}"]
@@ -1977,6 +1992,23 @@ def main():
                       "(drop a .fasta in the folder to enable recovery).")
         except ImportError:
             print("  [INFO] fasta_descriptions module not found — skipped.")
+
+    # Propager la Description (et Gene complété) vers df_raw (raw_peptides) via
+    # un mapping Accession -> Description, pour cohérence entre tous les onglets.
+    if "Description" in meta.columns and "Accession" in meta.columns:
+        desc_map = (meta[["Accession", "Description"]]
+                    .dropna(subset=["Accession"])
+                    .drop_duplicates("Accession")
+                    .set_index("Accession")["Description"].to_dict())
+        if "Accession" in df_raw.columns:
+            mapped = df_raw["Accession"].map(desc_map)
+            if "Description" in df_raw.columns:
+                # Compléter seulement les descriptions vides de l'export brut
+                empty = (df_raw["Description"].isna() |
+                         df_raw["Description"].astype(str).str.strip().eq(""))
+                df_raw.loc[empty, "Description"] = mapped[empty]
+            else:
+                df_raw["Description"] = mapped.values
     
     # 2. Log2 + normalisation médiane
     print("\n[STEP] log2 + median normalization...")
