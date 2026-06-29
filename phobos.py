@@ -1663,6 +1663,18 @@ def build_methods_sheet(ws, params: dict, n_raw_pep: int, n_filt_pep: int,
         kv("Selected PTMs", ", ".join(str(p) for p in _ptm),
            "Independent subset analysis per modification")
 
+    if "amidation_Gflank" in meta.columns or "signal_peptide" in meta.columns:
+        s("10. FASTA-BASED VALIDATION")
+        kv("Amidation check", "C-terminal +1 glycine",
+           "C-term alpha-amidation (PAM) consumes a glycine immediately "
+           "C-terminal to the site in the precursor. Each peptide is mapped onto "
+           "its protein; amidation_Gflank=yes if the residue at +1 is Gly "
+           "(validated), no otherwise (likely false positive), empty if not located.")
+        kv("Signal peptide", "von Heijne-style heuristic (yes/no)",
+           "Lightweight N-terminal signal-peptide call on the parent protein "
+           "(n/h/c-region). Approximation, not SignalP; flag only, no cleavage "
+           "position. Empty when the protein is absent from the FASTA.")
+
 
 def export_excel(df_raw: pd.DataFrame, df_results: pd.DataFrame,
                  df_anova: pd.DataFrame, df_intersections: pd.DataFrame,
@@ -1780,10 +1792,14 @@ def export_excel(df_raw: pd.DataFrame, df_results: pd.DataFrame,
         insert_img(ws, f, row=(i//2)*IMG_ROW+1, col=(i%2)*IMG_COL+1)
 
     # Analyse différentielle
+    # Colonnes lisibles d'abord (Sequence + Charge), peptide_id repoussé en
+    # toute fin comme clé technique (séquence + état de charge, garantit
+    # l'unicité entre charges mais peu lisible avec son suffixe |z=N).
     ws = wb.create_sheet("Differential_Expression")
-    cols_keep = ["peptide_id", "Sequence", "Modifications", "Charge",
+    cols_keep = ["Sequence", "Charge", "Modifications",
                  "Accession", "Gene", "Description", "Score_10lgP",
-                 "imputed", "num_imputed"]
+                 "imputed", "num_imputed",
+                 "amidation_Gflank", "signal_peptide"]
     for cname in contrast_names:
         for suffix in ("_diff", "_p.val", "_p.adj",
                        f"_p.val", f"_p.adj"):
@@ -1793,6 +1809,8 @@ def export_excel(df_raw: pd.DataFrame, df_results: pd.DataFrame,
         for col in (f"Pi_Score_{cname}", f"Robustness_Score_{cname}"):
             if col in df_results.columns:
                 cols_keep.append(col)
+    # peptide_id en dernière position (clé technique)
+    cols_keep.append("peptide_id")
     cols_keep = [c for c in cols_keep if c in df_results.columns]
     write_df(ws, df_results[cols_keep])
 
@@ -1857,7 +1875,8 @@ def export_excel(df_raw: pd.DataFrame, df_results: pd.DataFrame,
             if dfr is not None:
                 cols = ["peptide_id", "Sequence", "Modifications", "Charge",
                         "Accession", "Gene", "Description",
-                        "imputed", "num_imputed"]
+                        "imputed", "num_imputed",
+                        "amidation_Gflank", "signal_peptide"]
                 for c in cons:
                     cols += [f"{c}_diff", f"{c}_p.val", f"{c}_p.adj",
                              f"Pi_Score_{c}", f"Robustness_Score_{c}"]
@@ -2009,6 +2028,22 @@ def main():
                 df_raw.loc[empty, "Description"] = mapped[empty]
             else:
                 df_raw["Description"] = mapped.values
+
+    # 1ter. Validation PTM basée sur le FASTA (séquences) :
+    #   • amidation_Gflank : G en C-terminal +1 dans la protéine (valide
+    #     l'amidation C-term, dont le mécanisme PAM consomme une glycine)
+    #   • signal_peptide   : flag heuristique oui/non sur la protéine parente
+    # Ces colonnes ne sont ajoutées que si un FASTA est disponible.
+    try:
+        from ptm_validation import annotate as _ptm_annotate
+        search_dir = os.path.dirname(os.path.abspath(csv_path)) or "."
+        meta, ptmval_info = _ptm_annotate(
+            meta, fasta_path=params.get("fasta_path"),
+            search_dir=search_dir, seq_col="Sequence", acc_col="Accession")
+        if not ptmval_info["used"]:
+            print("  [INFO] No FASTA — amidation/signal-peptide validation skipped.")
+    except ImportError:
+        print("  [INFO] ptm_validation module not found — skipped.")
     
     # 2. Log2 + normalisation médiane
     print("\n[STEP] log2 + median normalization...")

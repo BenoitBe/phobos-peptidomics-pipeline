@@ -149,7 +149,7 @@ count), or fixed via `ptm_keys` in the YAML config.
 
 **Available PTMs:** Phosphorylation (+79.97), Oxidation (+15.99), Methylation
 mono (+14.02) / di (+28.03) / tri (+42.05) — also combined as `Methyl_all` —
-and Acetylation (+42.01).
+and Acetylation (+42.01), plus Amidation (C-term, −0.98).
 
 **Combined detection:** a peptide carries a PTM if matched by **either** the
 PTM text column (e.g. `Oxidation (M)`) **or** an inline delta mass in the
@@ -159,6 +159,22 @@ and the text annotation takes precedence to disambiguate.
 
 Each analysed PTM adds two Excel sheets (`PTM_<mod>_DE`, `PTM_<mod>_ANOVA`).
 A subset with fewer than 12 carrying peptides is skipped.
+
+### FASTA-based validation (amidation & signal peptide)
+
+When a FASTA is present, two extra validation columns are added:
+
+- **`amidation_Gflank`** (`yes`/`no`/empty): C-terminal α-amidation requires a
+  glycine immediately C-terminal to the site in the *precursor* — PAM consumes
+  that glycine, so the mature peptide ends in X-NH₂ and the Gly is absent from
+  the observed peptide. Phobos maps each peptide onto its protein and checks the
+  residue at position +1: `yes` if it is a glycine (validated amidation), `no`
+  otherwise (likely false positive: chemical artefact or mis-assignment). Use
+  this to filter your amidated hits.
+- **`signal_peptide`** (`yes`/`no`/empty): a lightweight von Heijne-style
+  heuristic flags whether the parent protein has an N-terminal signal peptide.
+  This is an approximation (not SignalP) — a yes/no indicator, no cleavage
+  position. For rigorous secretion prediction, run SignalP upstream.
 
 ---
 
